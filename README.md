@@ -1,7 +1,9 @@
 
-# Welcome to your CDK Python project!
+# Deadline RFDK Template
 
-This is a blank project for CDK development with Python.
+This is a basic RFDK template written in Python for deploying a render farm in AWS.
+
+RFDK itself is built on top of CDK.
 
 The `cdk.json` file tells the CDK Toolkit how to execute your app.
 
@@ -55,4 +57,5 @@ command.
  * `cdk diff`        compare deployed stack with current state
  * `cdk docs`        open CDK documentation
 
-Enjoy!
+
+Happy Rendering!
