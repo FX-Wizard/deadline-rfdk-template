@@ -1,3 +1,4 @@
+import os
 import aws_cdk as cdk
 import aws_rfdk as rfdk
 from aws_cdk import (
@@ -13,17 +14,30 @@ from constructs import Construct
 from aws_rfdk import deadline, SessionManagerHelper
 
 # Add details here
-VPC_ID =
-HOST =
-ZONE_NAME =
+HOST = 'deadline'
+ZONE_NAME = 'template.local'
 
 class RfdkDeadlineTemplateStack(Stack):
 
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, vpc_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        vpc = ec2.Vpc.from_lookup(
-            self, 'Deadline-VPC', vpc_id=VPC_ID)
+        if vpc_id:
+            vpc = ec2.Vpc.from_lookup(
+                self, 'Deadline-VPC', vpc_id=vpc_id)
+        else:
+            vpc = ec2.Vpc(self, 'Render-Farm-VPC',
+                cidr='172.16.0.0/16',
+                max_azs=True,
+                subnet_configuration=[
+                    ec2.SubnetConfiguration(
+                        name='Render-Subnet',
+                        cidrMask=20,
+                        subnet_type=ec2.SubnetType.PRIVATE_ISOLATED
+                    )
+                ],
+                #nat_gateways = 1, # uncomment if you want the render farm to have internet access
+            )
         
         #
         # DNS and SSL
@@ -109,7 +123,7 @@ class RfdkDeadlineTemplateStack(Stack):
                 ),
                 internal_protocol=elb2.ApplicationProtocol.HTTPS
             )
-            # Disable SSL/TLS
+            # Uncomment the below to Disable SSL/TLS
             # traffic_encryption=deadline.RenderQueueTrafficEncryptionProps(
             #     external_tls=deadline.RenderQueueExternalTLSProps(
             #         enabled=False

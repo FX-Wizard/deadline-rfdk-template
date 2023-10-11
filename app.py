@@ -9,6 +9,9 @@ from lib.spot_event_plugin_stack import DeadlineSpotEventPluginStack
 
 app = cdk.App()
 RfdkDeadlineTemplateStack(app, "RfdkDeadlineTemplateStack",
+    # ID of VPC to deploy into
+    os.getenv('CDK_DEFAULT_VPC'),
+    
     # If you don't specify 'env', this stack will be environment-agnostic.
     # Account/Region-dependent features and context lookups will not work,
     # but a single synthesized template can be deployed anywhere.
