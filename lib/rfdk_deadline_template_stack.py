@@ -1,6 +1,6 @@
-import os
 import aws_cdk as cdk
 import aws_rfdk as rfdk
+from dataclasses import dataclass
 from aws_cdk import (
     # Duration,
     Stack,
@@ -17,14 +17,21 @@ from aws_rfdk import deadline, SessionManagerHelper
 HOST = 'deadline'
 ZONE_NAME = 'template.local'
 
+
+@dataclass
+class DeadlineStackProps(cdk.StackProps):
+    vpc_id: str
+    aws_region: str
+
+
 class RfdkDeadlineTemplateStack(Stack):
 
-    def __init__(self, scope: Construct, construct_id: str, vpc_id: str, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, props: DeadlineStackProps, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        if vpc_id:
+        if props.vpc_id:
             vpc = ec2.Vpc.from_lookup(
-                self, 'Deadline-VPC', vpc_id=vpc_id)
+                self, 'Deadline-VPC', vpc_id=props.vpc_id)
         else:
             vpc = ec2.Vpc(self, 'Render-Farm-VPC',
                 cidr='172.16.0.0/16',
@@ -79,9 +86,9 @@ class RfdkDeadlineTemplateStack(Stack):
         # Deadline Repository
         #
 
-        # Specify Deadline Version (in this example we pin to the latest 10.2.0.x)
+        # Specify Deadline Version (in this example we pin to the latest 10.3.1.x)
         version = deadline.VersionQuery(self, 'Version',
-            version="10.3.0",
+            version="10.3.1",
         )
 
         # Fetch the Deadline container images for the specified Deadline version
@@ -136,17 +143,50 @@ class RfdkDeadlineTemplateStack(Stack):
 
         render_queue.connections.allow_default_port_from(ec2.Peer.ipv4(vpc.vpc_cidr_block))
 
-        #
-        # Spot render fleet
-        #
+        ##
+        # Spot fleet configuration
+        ##
+
+        # Create IAM roles needed for Spot Event Plugin
 
         if not iam.Role.from_role_name(self, 'role-exists-check', role_name='DeadlineResourceTrackerAccessRole'):
-            iam.Role(self, 'DeadlineResourceTrackerRole',
+            iam.Role(self, 'ResourceTrackerRole',
                 assumed_by=iam.ServicePrincipal('lambda.amazonaws.com'),
                 managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name(
                     'AWSThinkboxDeadlineResourceTrackerAccessPolicy')],
                 role_name='DeadlineResourceTrackerAccessRole'
             )
+
+        fleet_instance_role = iam.Role(self, 'DeadlineWorkerEC2Role',
+            role_name='DeadlineWorkerEC2Role',
+            assumed_by=iam.ServicePrincipal('ec2.amazonaws.com'),
+            managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name(
+                'AWSThinkboxDeadlineSpotEventPluginWorkerPolicy')],
+        )
+
+        # spotfleet_assume_role_policy_document = {
+        #     "Version": "2012-10-17",
+        #     "Statement": {
+        #         "Effect": "Allow",
+        #         "Principal": {"Service": "spotfleet.amazonaws.com"},
+        #         "Action": "sts:AssumeRole"
+        #     }
+        # }
+
+        # spotfleet_assume_policy = iam.CfnManagedPolicy(self, 'spotfleet_assume_role_policy',
+        #     policy_document=spotfleet_assume_role_policy_document,
+        #     description='Allow Deadline Spot Event Plugin to assume role'
+        # )
+
+        # if not iam.Role.from_role_name(self, 'role-exists-check', role_name='aws-ec2-spot-fleet-tagging-role'):
+        #     iam.Role(self, 'aws-ec2-spot-fleet-tagging-role',
+        #         assumed_by=iam.ServicePrincipal('spotfleet.amazonaws.com'),
+
+        #         managed_policies=[
+        #             iam.ManagedPolicy.from_aws_managed_policy_name(
+        #             'AWSThinkboxDeadlineResourceTrackerAccessPolicy')],
+        #         role_name='DeadlineResourceTrackerAccessRole'
+        #     )
         
         
         # for az in vpc.availability_zones:
@@ -158,28 +198,47 @@ class RfdkDeadlineTemplateStack(Stack):
         #         )
         #     )
 
-        render_worker_sg = ec2.SecurityGroup(self, 'Deadline-Render-Worker-SG',
-            vpc=vpc, security_group_name='Deadline-Render-Worker-SG')
-        # render_worker_sg.connections.allow_from(
-        #     ec2.Connections(
-        #         security_groups=[deadline.RenderQueueSecurityGroups.backend]
-        #     ),
-        #     ec2.Port.tcp(4433),
+        ##
+        # Security groups
+        ##
+        # render_worker_sg = ec2.SecurityGroup(self, 'Deadline-Render-Worker-SG',
+        #     vpc=vpc, 
+        #     security_group_name='Deadline-Render-Worker-SG',
+        #     allow_all_outbound=True
+        # )
+        # render_worker_sg.add_ingress_rule(
+        #     peer=deadline.RenderQueueSecurityGroups.backend,
+        #     connection=ec2.Port.tcp(4433),
+        #     description='Allow render worker to receive traffic from render queue'
         # )
 
-
-
-        ##
-        # Export Stack Outputs for Cross-Stack References
-        ##
-        cdk.CfnOutput(self, 'rfdk-vpc-id',
-            value=vpc.vpc_id,
-            export_name='rfdk-vpc-id'
+        fleet = deadline.SpotEventPluginFleet(self, 'BlenderSpotFleet',
+            vpc=vpc,
+            render_queue=render_queue,
+            deadline_groups=['blender-cloud'],
+            deadline_pools=['blender'],
+            # security_groups=[render_worker_sg],
+            instance_types=[
+                ec2.InstanceType.of(ec2.InstanceClass.C5, ec2.InstanceSize.XLARGE4), # VCPU: 16 RAM: 32GB
+                ec2.InstanceType.of(ec2.InstanceClass.M5, ec2.InstanceSize.XLARGE4), # VCPU: 16 RAM: 64GB
+                ec2.InstanceType.of(ec2.InstanceClass.C5A, ec2.InstanceSize.XLARGE4), # VCPU: 16 RAM: 32GB
+                ec2.InstanceType.of(ec2.InstanceClass.M5A, ec2.InstanceSize.XLARGE4), # VCPU: 16 RAM: 64GB
+            ],
+            max_capacity=5,
+            # security_groups=[render_worker_sg],
+            worker_machine_image=ec2.MachineImage.generic_linux({'': ''}), # TODO: add your region and ami
+            fleet_instance_role=fleet_instance_role,
         )
 
-        cdk.CfnOutput(self, 'rfdk-render-queue',
-            value=render_queue.to_string(),
-            export_name='rfdk-render-queue'
+        cdk.Tags.of(fleet).add('name', 'deadline-worker-blender')
+
+        deadline.ConfigureSpotEventPlugin(self, 'SpotEventPluginConfig',
+            vpc=vpc,
+            render_queue=render_queue,
+            spot_fleets=[fleet],
+            configuration=deadline.SpotEventPluginSettings(
+                enable_resource_tracker=True,
+            ),
         )
 
 

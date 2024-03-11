@@ -7,3 +7,7 @@ aws secretsmanager get-secret-value --secret-id $TLS_KEY_SECRET_NAME --query Sec
 # get password key
 TLS_PASSWORD_SECRET_NAME=`aws secretsmanager list-secrets --filter Key=name,Values=RenderQueueTlsRcsCertBundle --query "SecretList[].Name | [0]"`
 aws secretsmanager get-secret-value --secret-id $TLS_PASSWORD_SECRET_NAME
+
+# render node ca certificate
+ROOT_CA_CERT=`aws secretsmanager list-secrets --output json | jq -r '.SecretList[] | select(.Name | test("RootCA-X.509-Certificate")) | .Name'`
+aws secretsmanager get-secret-value --secret-id $ROOT_CA_CERT --query SecretString --output text > ca.crt

@@ -3,14 +3,23 @@ import os
 
 import aws_cdk as cdk
 
-from lib.rfdk_deadline_template_stack import RfdkDeadlineTemplateStack
+from lib.rfdk_deadline_template_stack import RfdkDeadlineTemplateStack, DeadlineStackProps
 from lib.spot_event_plugin_stack import DeadlineSpotEventPluginStack
 
+from config import AppConfig
 
 app = cdk.App()
+config: AppConfig = AppConfig()
+
+stack_props = DeadlineStackProps(
+    vpc_id=config.vpc_id,
+    aws_region=config.aws_region
+)
+
+
 RfdkDeadlineTemplateStack(app, "RfdkDeadlineTemplateStack",
     # ID of VPC to deploy into
-    os.getenv('CDK_DEFAULT_VPC'),
+    props=stack_props,
     
     # If you don't specify 'env', this stack will be environment-agnostic.
     # Account/Region-dependent features and context lookups will not work,
@@ -27,10 +36,11 @@ RfdkDeadlineTemplateStack(app, "RfdkDeadlineTemplateStack",
     # env=cdk.Environment(account='123456789012', region='us-east-1'),
 
     # For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html
-    )
-
-DeadlineSpotEventPluginStack(app, 'DeadlineSpotEventPluginStack',
-    env=cdk.Environment(account=os.getenv('CDK_DEFAULT_ACCOUNT'), region=os.getenv('CDK_DEFAULT_REGION')),
 )
+
+# DeadlineSpotEventPluginStack(app, 'DeadlineSpotEventPluginStack',
+#     props=stack_props,
+#     env=cdk.Environment(account=os.getenv('CDK_DEFAULT_ACCOUNT'), region=os.getenv('CDK_DEFAULT_REGION')),
+# )
 
 app.synth()
