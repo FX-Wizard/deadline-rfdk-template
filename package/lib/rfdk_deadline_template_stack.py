@@ -12,6 +12,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 from aws_rfdk import deadline, SessionManagerHelper
+from typing import Mapping
 
 # Add details here
 HOST = 'deadline'
@@ -22,6 +23,8 @@ ZONE_NAME = 'template.local'
 class DeadlineStackProps(cdk.StackProps):
     vpc_id: str
     aws_region: str
+    docker_recipes_stage_path: str
+    worker_image: Mapping[str, str]
 
 
 class RfdkDeadlineTemplateStack(Stack):
@@ -49,7 +52,6 @@ class RfdkDeadlineTemplateStack(Stack):
         #
         # DNS and SSL
         #
-
         dns_zone = route53.PrivateHostedZone(self, 'DeadlineDNSPrivateZone',
             vpc=vpc,
             zone_name=ZONE_NAME
@@ -67,19 +69,6 @@ class RfdkDeadlineTemplateStack(Stack):
                 ou='RenderQueueExternal',
             ),
             signing_certificate=ca_cert
-        )
-
-        # Convert the identity certificate PEM into PKCS#12
-        rfdk.X509CertificatePkcs12(self, 'DeadlinePkcs',
-            source_certificate=server_cert
-        )
-
-        # Import the identity certificate into ACM
-        rfdk.ImportedAcmCertificate(self, 'DeadlineAcmCert2',
-            cert=server_cert.cert,
-            cert_chain=server_cert.cert_chain,
-            key=server_cert.key,
-            passphrase=server_cert.passphrase,
         )
 
         #
@@ -104,9 +93,16 @@ class RfdkDeadlineTemplateStack(Stack):
                 deadline.AwsCustomerAgreementAndIpLicenseAcceptance.USER_ACCEPTS_AWS_CUSTOMER_AGREEMENT_AND_IP_LICENSE
         )
 
+        # recipes = deadline.ThinkboxDockerRecipes(
+        #     self,
+        #     'Image',
+        #     stage=deadline.Stage.from_directory(props.docker_recipes_stage_path),
+        # )
+
         repository = deadline.Repository(self, 'Repository',
             vpc=vpc,
             version=version,
+            repository_installation_timeout=cdk.Duration.minutes(20),
             removal_policy=deadline.RepositoryRemovalPolicies(
                 database=cdk.RemovalPolicy.DESTROY,
                 filesystem=cdk.RemovalPolicy.DESTROY
@@ -149,13 +145,13 @@ class RfdkDeadlineTemplateStack(Stack):
 
         # Create IAM roles needed for Spot Event Plugin
 
-        if not iam.Role.from_role_name(self, 'role-exists-check', role_name='DeadlineResourceTrackerAccessRole'):
-            iam.Role(self, 'ResourceTrackerRole',
-                assumed_by=iam.ServicePrincipal('lambda.amazonaws.com'),
-                managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name(
-                    'AWSThinkboxDeadlineResourceTrackerAccessPolicy')],
-                role_name='DeadlineResourceTrackerAccessRole'
-            )
+        # if not iam.Role.from_role_name(self, 'role-exists-check', role_name='DeadlineResourceTrackerAccessRole'):
+        iam.Role(self, 'ResourceTrackerRole',
+            assumed_by=iam.ServicePrincipal('lambda.amazonaws.com'),
+            managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name(
+                'AWSThinkboxDeadlineResourceTrackerAccessPolicy')],
+            role_name='DeadlineResourceTrackerAccessRole'
+        )
 
         fleet_instance_role = iam.Role(self, 'DeadlineWorkerEC2Role',
             role_name='DeadlineWorkerEC2Role',
@@ -226,7 +222,7 @@ class RfdkDeadlineTemplateStack(Stack):
             ],
             max_capacity=5,
             # security_groups=[render_worker_sg],
-            worker_machine_image=ec2.MachineImage.generic_linux({'': ''}), # TODO: add your region and ami
+            worker_machine_image=ec2.MachineImage.generic_linux(props.worker_image), # TODO: add your region and ami
             fleet_instance_role=fleet_instance_role,
         )
 

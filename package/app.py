@@ -3,17 +3,20 @@ import os
 
 import aws_cdk as cdk
 
-from lib.rfdk_deadline_template_stack import RfdkDeadlineTemplateStack, DeadlineStackProps
-from lib.spot_event_plugin_stack import DeadlineSpotEventPluginStack
+from .lib.rfdk_deadline_template_stack import RfdkDeadlineTemplateStack, DeadlineStackProps
 
-from config import AppConfig
+from .config import AppConfig
 
 app = cdk.App()
+
+# Get RFDK configuration options
 config: AppConfig = AppConfig()
 
 stack_props = DeadlineStackProps(
     vpc_id=config.vpc_id,
-    aws_region=config.aws_region
+    aws_region=config.aws_region,
+    docker_recipes_stage_path=os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, 'stage'),
+    worker_image=config.deadline_client_linux_ami_map
 )
 
 
@@ -28,7 +31,7 @@ RfdkDeadlineTemplateStack(app, "RfdkDeadlineTemplateStack",
     # Uncomment the next line to specialize this stack for the AWS Account
     # and Region that are implied by the current CLI configuration.
 
-    env=cdk.Environment(account=os.getenv('CDK_DEFAULT_ACCOUNT'), region=os.getenv('CDK_DEFAULT_REGION')),
+    env=cdk.Environment(account=os.getenv('CDK_DEFAULT_ACCOUNT'), region=config.aws_region),
 
     # Uncomment the next line if you know exactly what Account and Region you
     # want to deploy the stack to. */
@@ -38,9 +41,5 @@ RfdkDeadlineTemplateStack(app, "RfdkDeadlineTemplateStack",
     # For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html
 )
 
-# DeadlineSpotEventPluginStack(app, 'DeadlineSpotEventPluginStack',
-#     props=stack_props,
-#     env=cdk.Environment(account=os.getenv('CDK_DEFAULT_ACCOUNT'), region=os.getenv('CDK_DEFAULT_REGION')),
-# )
 
 app.synth()
