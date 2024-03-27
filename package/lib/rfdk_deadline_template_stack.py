@@ -2,10 +2,8 @@ import aws_cdk as cdk
 import aws_rfdk as rfdk
 from dataclasses import dataclass
 from aws_cdk import (
-    # Duration,
     Stack,
     aws_ec2 as ec2,
-    aws_s3 as s3,
     aws_iam as iam,
     aws_route53 as route53,
     aws_elasticloadbalancingv2 as elb2
@@ -14,17 +12,19 @@ from constructs import Construct
 from aws_rfdk import deadline, SessionManagerHelper
 from typing import Mapping
 
-# Add details here
-HOST = 'deadline'
-ZONE_NAME = 'template.local'
-
 
 @dataclass
 class DeadlineStackProps(cdk.StackProps):
     vpc_id: str
     aws_region: str
+    renderqueue_name: str
+    zone_name: str
+    deadline_version: str
+    use_traffic_encryption: bool
+    create_resource_tracker_role: bool
     docker_recipes_stage_path: str
     worker_image: Mapping[str, str]
+    spot_fleet_configs: dict
 
 
 class RfdkDeadlineTemplateStack(Stack):
@@ -54,7 +54,7 @@ class RfdkDeadlineTemplateStack(Stack):
         #
         dns_zone = route53.PrivateHostedZone(self, 'DeadlineDNSPrivateZone',
             vpc=vpc,
-            zone_name=ZONE_NAME
+            zone_name=props.zone_name
         )
 
         # Generate a root CA and then use it to sign another identity certificate
@@ -64,7 +64,7 @@ class RfdkDeadlineTemplateStack(Stack):
 
         server_cert = rfdk.X509CertificatePem(self, 'RQCert',
             subject=rfdk.DistinguishedName(
-                cn=f'{HOST}.{ZONE_NAME}',
+                cn=f'{props.renderqueue_name}.{props.zone_name}',
                 o='RFDK-Deadline',
                 ou='RenderQueueExternal',
             ),
@@ -74,10 +74,8 @@ class RfdkDeadlineTemplateStack(Stack):
         #
         # Deadline Repository
         #
-
-        # Specify Deadline Version (in this example we pin to the latest 10.3.1.x)
         version = deadline.VersionQuery(self, 'Version',
-            version="10.3.1",
+            version=props.deadline_version,
         )
 
         # Fetch the Deadline container images for the specified Deadline version
@@ -93,12 +91,6 @@ class RfdkDeadlineTemplateStack(Stack):
                 deadline.AwsCustomerAgreementAndIpLicenseAcceptance.USER_ACCEPTS_AWS_CUSTOMER_AGREEMENT_AND_IP_LICENSE
         )
 
-        # recipes = deadline.ThinkboxDockerRecipes(
-        #     self,
-        #     'Image',
-        #     stage=deadline.Stage.from_directory(props.docker_recipes_stage_path),
-        # )
-
         repository = deadline.Repository(self, 'Repository',
             vpc=vpc,
             version=version,
@@ -109,6 +101,21 @@ class RfdkDeadlineTemplateStack(Stack):
             )
         )
 
+        if props.use_traffic_encryption:
+            traffic_encryption=deadline.RenderQueueTrafficEncryptionProps(
+                external_tls=deadline.RenderQueueExternalTLSProps(
+                    rfdk_certificate=server_cert,
+                ),
+                internal_protocol=elb2.ApplicationProtocol.HTTPS
+            )
+        else:
+            traffic_encryption=deadline.RenderQueueTrafficEncryptionProps(
+                external_tls=deadline.RenderQueueExternalTLSProps(
+                    enabled=False
+                ),
+                internal_protocol=elb2.ApplicationProtocol.HTTPS
+            )
+
         # Use the container images to create a RenderQueue
         render_queue = deadline.RenderQueue(self, 'RenderQueue',
             vpc=vpc,
@@ -117,22 +124,10 @@ class RfdkDeadlineTemplateStack(Stack):
             images=images.for_render_queue(),
             deletion_protection=False,
             hostname=deadline.RenderQueueHostNameProps(
-                hostname=HOST,
+                hostname=props.renderqueue_name,
                 zone=dns_zone,
             ),
-            traffic_encryption=deadline.RenderQueueTrafficEncryptionProps(
-                external_tls=deadline.RenderQueueExternalTLSProps(
-                    rfdk_certificate=server_cert,
-                ),
-                internal_protocol=elb2.ApplicationProtocol.HTTPS
-            )
-            # Uncomment the below to Disable SSL/TLS
-            # traffic_encryption=deadline.RenderQueueTrafficEncryptionProps(
-            #     external_tls=deadline.RenderQueueExternalTLSProps(
-            #         enabled=False
-            #     ),
-            #     internal_protocol=elb2.ApplicationProtocol.HTTPS
-            # ),
+            traffic_encryption=traffic_encryption
         )
         # Allow terminal connection to render queue via Session Manager
         SessionManagerHelper.grant_permissions_to(render_queue.asg)
@@ -143,21 +138,23 @@ class RfdkDeadlineTemplateStack(Stack):
         # Spot fleet configuration
         ##
 
-        # Create IAM roles needed for Spot Event Plugin
+        # Create IAM role needed for Resource Tracker
+        if props.create_resource_tracker_role:
+            iam.Role(self, 'ResourceTrackerRole',
+                assumed_by=iam.ServicePrincipal('lambda.amazonaws.com'),
+                managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name(
+                    'AWSThinkboxDeadlineResourceTrackerAccessPolicy')],
+                role_name='DeadlineResourceTrackerAccessRole'
+            )
 
-        # if not iam.Role.from_role_name(self, 'role-exists-check', role_name='DeadlineResourceTrackerAccessRole'):
-        iam.Role(self, 'ResourceTrackerRole',
-            assumed_by=iam.ServicePrincipal('lambda.amazonaws.com'),
-            managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name(
-                'AWSThinkboxDeadlineResourceTrackerAccessPolicy')],
-            role_name='DeadlineResourceTrackerAccessRole'
-        )
-
+        # Create IAM role for spot fleet worker
         fleet_instance_role = iam.Role(self, 'DeadlineWorkerEC2Role',
             role_name='DeadlineWorkerEC2Role',
             assumed_by=iam.ServicePrincipal('ec2.amazonaws.com'),
-            managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name(
-                'AWSThinkboxDeadlineSpotEventPluginWorkerPolicy')],
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name('AWSThinkboxDeadlineSpotEventPluginWorkerPolicy'),
+                iam.ManagedPolicy.from_aws_managed_policy_name('AmazonSSMManagedInstanceCore')
+            ],
         )
 
         # spotfleet_assume_role_policy_document = {
@@ -208,35 +205,36 @@ class RfdkDeadlineTemplateStack(Stack):
         #     description='Allow render worker to receive traffic from render queue'
         # )
 
-        fleet = deadline.SpotEventPluginFleet(self, 'BlenderSpotFleet',
-            vpc=vpc,
-            render_queue=render_queue,
-            deadline_groups=['blender-cloud'],
-            deadline_pools=['blender'],
-            # security_groups=[render_worker_sg],
-            instance_types=[
-                ec2.InstanceType.of(ec2.InstanceClass.C5, ec2.InstanceSize.XLARGE4), # VCPU: 16 RAM: 32GB
-                ec2.InstanceType.of(ec2.InstanceClass.M5, ec2.InstanceSize.XLARGE4), # VCPU: 16 RAM: 64GB
-                ec2.InstanceType.of(ec2.InstanceClass.C5A, ec2.InstanceSize.XLARGE4), # VCPU: 16 RAM: 32GB
-                ec2.InstanceType.of(ec2.InstanceClass.M5A, ec2.InstanceSize.XLARGE4), # VCPU: 16 RAM: 64GB
-            ],
-            max_capacity=5,
-            # security_groups=[render_worker_sg],
-            worker_machine_image=ec2.MachineImage.generic_linux(props.worker_image), # TODO: add your region and ami
-            fleet_instance_role=fleet_instance_role,
-        )
-
-        cdk.Tags.of(fleet).add('name', 'deadline-worker-blender')
+        spot_fleets = []
+        for i, fleet in props.spot_fleet_configs.items():
+            if fleet["is_linux"]:
+                ami = ec2.MachineImage.generic_linux(fleet['worker_image'])
+            else:
+                ami = ec2.MachineImage.generic_windows(fleet['worker_image'])
+            spot_fleet_config = deadline.SpotEventPluginFleet(self,
+                fleet['name'],
+                vpc=vpc,
+                render_queue=render_queue,
+                deadline_groups=fleet['deadline_groups'],
+                deadline_pools=fleet['deadline_pools'],
+                # security_groups=[render_worker_sg],
+                instance_types=self.instanceListFormatter(fleet['instance_types']),
+                fleet_instance_role=fleet_instance_role,
+                max_capacity=fleet['max_capacity'],
+                worker_machine_image=ami,
+            )
+            cdk.Tags.of(spot_fleet_config).add('Name', 'Deadline-Worker')
+            cdk.Tags.of(spot_fleet_config).add('fleet', fleet['name'])
+            spot_fleets.append(spot_fleet_config)
 
         deadline.ConfigureSpotEventPlugin(self, 'SpotEventPluginConfig',
             vpc=vpc,
             render_queue=render_queue,
-            spot_fleets=[fleet],
+            spot_fleets=spot_fleets,
             configuration=deadline.SpotEventPluginSettings(
                 enable_resource_tracker=True,
             ),
         )
-
 
         ##
         # Database connection
@@ -244,3 +242,15 @@ class RfdkDeadlineTemplateStack(Stack):
         # dbc = deadline.DatabaseConnection()
 
         # dbc.for_doc_db()
+
+    def instanceListFormatter(self, instance_list: list) -> list:
+        """
+        Formats a list of instance names into a list of ec2.InstanceType
+        """
+        instance_type_format_list = []
+
+        for name in instance_list:
+            instance_type_format= ec2.InstanceType(name)
+            instance_type_format_list.append(instance_type_format)
+
+        return instance_type_format_list

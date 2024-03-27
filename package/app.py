@@ -15,8 +15,14 @@ config: AppConfig = AppConfig()
 stack_props = DeadlineStackProps(
     vpc_id=config.vpc_id,
     aws_region=config.aws_region,
+    renderqueue_name=config.renderqueue_name,
+    zone_name=config.zone_name,
+    deadline_version=config.deadline_version,
+    use_traffic_encryption=config.use_traffic_encryption,
+    create_resource_tracker_role=config.create_resource_tracker_role,
     docker_recipes_stage_path=os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, 'stage'),
-    worker_image=config.deadline_client_linux_ami_map
+    worker_image=config.deadline_client_linux_ami_map,
+    spot_fleet_configs=config.spot_fleet_configs,
 )
 
 
