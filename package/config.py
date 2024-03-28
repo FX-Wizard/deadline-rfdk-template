@@ -17,11 +17,11 @@ class AppConfig:
         self.zone_name: str = 'deadline.internal'
 
         # Deadline settings
-        self.deadline_version: str = '10.3.1'
+        self.deadline_version: str = '10.3.2'
         self.use_traffic_encryption: bool = True
 
         # Worker AMI
-        self.deadline_client_linux_ami_map: Mapping[str, str] = {self.aws_region: 'TODO: ADD THE ID OF YOUR AMI HERE'}
+        deadline_client_linux_ami_map: Mapping[str, str] = {self.aws_region: 'TODO: ADD THE ID OF YOUR AMI HERE'}
 
         # Deadline's Resource Tracker only supports a single Deadline Repository per AWS account.
         # Set to False if there is an existing Deadline Repository in the account.
@@ -42,7 +42,7 @@ class AppConfig:
                 'deadline_groups': ['blender-cloud'],
                 'deadline_pools': ['blender'],
                 'instance_types': instance_types['small'],
-                'worker_image': self.deadline_client_linux_ami_map,
+                'worker_image': deadline_client_linux_ami_map,
                 'max_capacity': 5,
             }
         }

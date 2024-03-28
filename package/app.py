@@ -21,7 +21,6 @@ stack_props = DeadlineStackProps(
     use_traffic_encryption=config.use_traffic_encryption,
     create_resource_tracker_role=config.create_resource_tracker_role,
     docker_recipes_stage_path=os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, 'stage'),
-    worker_image=config.deadline_client_linux_ami_map,
     spot_fleet_configs=config.spot_fleet_configs,
 )
 

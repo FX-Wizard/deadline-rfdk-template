@@ -23,7 +23,6 @@ class DeadlineStackProps(cdk.StackProps):
     use_traffic_encryption: bool
     create_resource_tracker_role: bool
     docker_recipes_stage_path: str
-    worker_image: Mapping[str, str]
     spot_fleet_configs: dict
 
 
