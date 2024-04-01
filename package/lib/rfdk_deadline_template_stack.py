@@ -190,19 +190,12 @@ class RfdkDeadlineTemplateStack(Stack):
         #         )
         #     )
 
-        ##
-        # Security groups
-        ##
-        # render_worker_sg = ec2.SecurityGroup(self, 'Deadline-Render-Worker-SG',
-        #     vpc=vpc, 
-        #     security_group_name='Deadline-Render-Worker-SG',
-        #     allow_all_outbound=True
-        # )
-        # render_worker_sg.add_ingress_rule(
-        #     peer=deadline.RenderQueueSecurityGroups.backend,
-        #     connection=ec2.Port.tcp(4433),
-        #     description='Allow render worker to receive traffic from render queue'
-        # )
+        # Security group
+        render_worker_sg = ec2.SecurityGroup(self, 'Deadline-Render-Worker-SG',
+            vpc=vpc, 
+            security_group_name='Deadline-Render-Worker-SG',
+            allow_all_outbound=True
+        )
 
         spot_fleets = []
         for i, fleet in props.spot_fleet_configs.items():
@@ -216,14 +209,15 @@ class RfdkDeadlineTemplateStack(Stack):
                 render_queue=render_queue,
                 deadline_groups=fleet['deadline_groups'],
                 deadline_pools=fleet['deadline_pools'],
-                # security_groups=[render_worker_sg],
+                security_groups=[render_worker_sg],
                 instance_types=self.instanceListFormatter(fleet['instance_types']),
                 fleet_instance_role=fleet_instance_role,
                 max_capacity=fleet['max_capacity'],
                 worker_machine_image=ami,
             )
-            cdk.Tags.of(spot_fleet_config).add('Name', 'Deadline-Worker')
-            cdk.Tags.of(spot_fleet_config).add('fleet', fleet['name'])
+            if fleet['tags']:
+                for key, value in fleet['tags'].items():
+                    cdk.Tags.of(spot_fleet_config).add(key, value)
             spot_fleets.append(spot_fleet_config)
 
         deadline.ConfigureSpotEventPlugin(self, 'SpotEventPluginConfig',
@@ -235,12 +229,17 @@ class RfdkDeadlineTemplateStack(Stack):
             ),
         )
 
-        ##
-        # Database connection
-        ##
-        # dbc = deadline.DatabaseConnection()
+        #
+        # Usage Based Licensing (UBL)
+        #
+        # deadline.UsageBasedLicensing(self, 'UsageBasedLicensing',
+        #     vpc=vpc,
+        #     render_queue=render_queue,
+        #     images=images,
+        #     licenses=[],
+        #     certificate_secret=
+        # )
 
-        # dbc.for_doc_db()
 
     def instanceListFormatter(self, instance_list: list) -> list:
         """
