@@ -17,7 +17,7 @@ class AppConfig:
         self.zone_name: str = 'deadline.internal'
 
         # Deadline settings
-        self.deadline_version: str = '10.3.2'
+        self.deadline_version: str = '10.4.2'
         self.use_traffic_encryption: bool = True
 
         # Deadline's Resource Tracker only supports a single Deadline Repository per AWS account.
