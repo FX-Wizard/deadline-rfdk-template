@@ -4,7 +4,7 @@ import os
 import aws_cdk as cdk
 
 from .lib.rfdk_deadline_template_stack import RfdkDeadlineTemplateStack, DeadlineStackProps
-
+from .lib.vpc_stack import VpcStack
 from .config import AppConfig
 
 app = cdk.App()
@@ -12,39 +12,58 @@ app = cdk.App()
 # Get RFDK configuration options
 config: AppConfig = AppConfig()
 
-stack_props = DeadlineStackProps(
-    vpc_id=config.vpc_id,
-    aws_region=config.aws_region,
-    renderqueue_name=config.renderqueue_name,
-    zone_name=config.zone_name,
-    deadline_version=config.deadline_version,
-    use_traffic_encryption=config.use_traffic_encryption,
-    create_resource_tracker_role=config.create_resource_tracker_role,
-    docker_recipes_stage_path=os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, 'stage'),
-    spot_fleet_configs=config.spot_fleet_configs,
+# Create environment for the stacks
+env = cdk.Environment(
+    account=os.getenv('CDK_DEFAULT_ACCOUNT'),
+    region=config.aws_region
 )
 
+# Create VPC Stack only if vpc_id is not provided
+vpc_stack = None
+if not config.vpc_id:
+    vpc_stack = VpcStack(
+        app,
+        stack_name="Renderfarm-VPC",
+        env=env
+    )
 
-RfdkDeadlineTemplateStack(app, "RfdkDeadlineTemplateStack",
-    # ID of VPC to deploy into
+# Create Deadline Stack with appropriate VPC reference
+if vpc_stack:
+    # Pass VPC object directly
+    stack_props = DeadlineStackProps(
+        vpc=vpc_stack.vpc,
+        aws_region=config.aws_region,
+        renderqueue_name=config.renderqueue_name,
+        zone_name=config.zone_name,
+        deadline_version=config.deadline_version,
+        use_traffic_encryption=config.use_traffic_encryption,
+        create_resource_tracker_role=config.create_resource_tracker_role,
+        docker_recipes_stage_path=os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, 'stage'),
+        spot_fleet_configs=config.spot_fleet_configs,
+    )
+else:
+    # Use existing VPC ID
+    stack_props = DeadlineStackProps(
+        vpc_id=config.vpc_id,
+        aws_region=config.aws_region,
+        renderqueue_name=config.renderqueue_name,
+        zone_name=config.zone_name,
+        deadline_version=config.deadline_version,
+        use_traffic_encryption=config.use_traffic_encryption,
+        create_resource_tracker_role=config.create_resource_tracker_role,
+        docker_recipes_stage_path=os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, 'stage'),
+        spot_fleet_configs=config.spot_fleet_configs,
+    )
+
+deadline_stack = RfdkDeadlineTemplateStack(
+    app,
+    "RfdkDeadlineTemplateStack",
     props=stack_props,
-    
-    # If you don't specify 'env', this stack will be environment-agnostic.
-    # Account/Region-dependent features and context lookups will not work,
-    # but a single synthesized template can be deployed anywhere.
-
-    # Uncomment the next line to specialize this stack for the AWS Account
-    # and Region that are implied by the current CLI configuration.
-
-    env=cdk.Environment(account=os.getenv('CDK_DEFAULT_ACCOUNT'), region=config.aws_region),
-
-    # Uncomment the next line if you know exactly what Account and Region you
-    # want to deploy the stack to. */
-
-    # env=cdk.Environment(account='123456789012', region='us-east-1'),
-
-    # For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html
+    env=env
 )
 
+# Add dependency only if VPC stack was created
+if vpc_stack:
+    deadline_stack.add_dependency(vpc_stack)
 
 app.synth()

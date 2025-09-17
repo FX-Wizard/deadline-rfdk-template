@@ -10,20 +10,21 @@ from aws_cdk import (
 )
 from constructs import Construct
 from aws_rfdk import deadline, SessionManagerHelper
-from typing import Mapping
+from typing import Mapping, Optional
 
 
 @dataclass
 class DeadlineStackProps(cdk.StackProps):
-    vpc_id: str
-    aws_region: str
-    renderqueue_name: str
-    zone_name: str
-    deadline_version: str
-    use_traffic_encryption: bool
-    create_resource_tracker_role: bool
-    docker_recipes_stage_path: str
-    spot_fleet_configs: dict
+    vpc: Optional[ec2.IVpc] = None
+    vpc_id: Optional[str] = None
+    aws_region: str = None
+    renderqueue_name: str = None
+    zone_name: str = None
+    deadline_version: str = None
+    use_traffic_encryption: bool = None
+    create_resource_tracker_role: bool = None
+    docker_recipes_stage_path: str = None
+    spot_fleet_configs: dict = None
 
 
 class RfdkDeadlineTemplateStack(Stack):
@@ -31,21 +32,13 @@ class RfdkDeadlineTemplateStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, props: DeadlineStackProps, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        if props.vpc_id:
-            vpc = ec2.Vpc.from_lookup(
-                self, 'Deadline-VPC', vpc_id=props.vpc_id)
+        # Use VPC object directly if provided, otherwise lookup by ID
+        if props.vpc:
+            vpc = props.vpc
         else:
-            vpc = ec2.Vpc(self, 'Render-Farm-VPC',
-                cidr='172.16.0.0/16',
-                max_azs=True,
-                subnet_configuration=[
-                    ec2.SubnetConfiguration(
-                        name='Render-Subnet',
-                        cidrMask=20,
-                        subnet_type=ec2.SubnetType.PRIVATE_ISOLATED
-                    )
-                ],
-                #nat_gateways = 1, # uncomment if you want the render farm to have internet access
+            vpc = ec2.Vpc.from_lookup(
+                self, 'Deadline-VPC',
+                vpc_id=props.vpc_id
             )
         
         #
@@ -60,6 +53,7 @@ class RfdkDeadlineTemplateStack(Stack):
         ca_cert = rfdk.X509CertificatePem(self, 'RootCA',
             subject=rfdk.DistinguishedName(cn='DeadlineRootCA')
         )
+        cdk.Tags.of(ca_cert).add('Purpose', 'RootCA')
 
         server_cert = rfdk.X509CertificatePem(self, 'RQCert',
             subject=rfdk.DistinguishedName(
@@ -69,6 +63,7 @@ class RfdkDeadlineTemplateStack(Stack):
             ),
             signing_certificate=ca_cert
         )
+        cdk.Tags.of(ca_cert).add('Purpose', 'RenderQueueCertificate')
 
         #
         # Deadline Repository
@@ -97,7 +92,9 @@ class RfdkDeadlineTemplateStack(Stack):
             removal_policy=deadline.RepositoryRemovalPolicies(
                 database=cdk.RemovalPolicy.DESTROY,
                 filesystem=cdk.RemovalPolicy.DESTROY
-            )
+            ),
+            # Use private subnets
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS)
         )
 
         if props.use_traffic_encryption:
@@ -126,7 +123,9 @@ class RfdkDeadlineTemplateStack(Stack):
                 hostname=props.renderqueue_name,
                 zone=dns_zone,
             ),
-            traffic_encryption=traffic_encryption
+            traffic_encryption=traffic_encryption,
+            # Use private subnets
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS)
         )
         # Allow terminal connection to render queue via Session Manager
         SessionManagerHelper.grant_permissions_to(render_queue.asg)
@@ -155,40 +154,6 @@ class RfdkDeadlineTemplateStack(Stack):
                 iam.ManagedPolicy.from_aws_managed_policy_name('AmazonSSMManagedInstanceCore')
             ],
         )
-
-        # spotfleet_assume_role_policy_document = {
-        #     "Version": "2012-10-17",
-        #     "Statement": {
-        #         "Effect": "Allow",
-        #         "Principal": {"Service": "spotfleet.amazonaws.com"},
-        #         "Action": "sts:AssumeRole"
-        #     }
-        # }
-
-        # spotfleet_assume_policy = iam.CfnManagedPolicy(self, 'spotfleet_assume_role_policy',
-        #     policy_document=spotfleet_assume_role_policy_document,
-        #     description='Allow Deadline Spot Event Plugin to assume role'
-        # )
-
-        # if not iam.Role.from_role_name(self, 'role-exists-check', role_name='aws-ec2-spot-fleet-tagging-role'):
-        #     iam.Role(self, 'aws-ec2-spot-fleet-tagging-role',
-        #         assumed_by=iam.ServicePrincipal('spotfleet.amazonaws.com'),
-
-        #         managed_policies=[
-        #             iam.ManagedPolicy.from_aws_managed_policy_name(
-        #             'AWSThinkboxDeadlineResourceTrackerAccessPolicy')],
-        #         role_name='DeadlineResourceTrackerAccessRole'
-        #     )
-        
-        
-        # for az in vpc.availability_zones:
-        #     subnet_list.append(
-        #         ec2.PrivateSubnet(self, 'deadline-render-worker-subnet',
-        #             availability_zone=az,
-        #             cidr_block=20,
-        #             vpc_id=vpc.vpc_id,
-        #         )
-        #     )
 
         # Security group
         render_worker_sg = ec2.SecurityGroup(self, 'Deadline-Render-Worker-SG',
@@ -228,17 +193,6 @@ class RfdkDeadlineTemplateStack(Stack):
                 enable_resource_tracker=True,
             ),
         )
-
-        #
-        # Usage Based Licensing (UBL)
-        #
-        # deadline.UsageBasedLicensing(self, 'UsageBasedLicensing',
-        #     vpc=vpc,
-        #     render_queue=render_queue,
-        #     images=images,
-        #     licenses=[],
-        #     certificate_secret=
-        # )
 
 
     def instanceListFormatter(self, instance_list: list) -> list:
