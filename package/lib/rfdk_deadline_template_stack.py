@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from aws_cdk import (
     Stack,
     aws_ec2 as ec2,
-    aws_iam as iam,
     aws_route53 as route53,
     aws_elasticloadbalancingv2 as elb2
 )
@@ -22,7 +21,6 @@ class DeadlineStackProps(cdk.StackProps):
     zone_name: str = None
     deadline_version: str = None
     use_traffic_encryption: bool = None
-    create_resource_tracker_role: bool = None
     docker_recipes_stage_path: str = None
     spot_fleet_configs: dict = None
 
@@ -132,77 +130,13 @@ class RfdkDeadlineTemplateStack(Stack):
 
         render_queue.connections.allow_default_port_from(ec2.Peer.ipv4(vpc.vpc_cidr_block))
 
-        ##
-        # Spot fleet configuration
-        ##
-
-        # Create IAM role needed for Resource Tracker
-        if props.create_resource_tracker_role:
-            iam.Role(self, 'ResourceTrackerRole',
-                assumed_by=iam.ServicePrincipal('lambda.amazonaws.com'),
-                managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name(
-                    'AWSThinkboxDeadlineResourceTrackerAccessPolicy')],
-                role_name='DeadlineResourceTrackerAccessRole'
-            )
-
-        # Create IAM role for spot fleet worker
-        fleet_instance_role = iam.Role(self, 'DeadlineWorkerEC2Role',
-            role_name='DeadlineWorkerEC2Role',
-            assumed_by=iam.ServicePrincipal('ec2.amazonaws.com'),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name('AWSThinkboxDeadlineSpotEventPluginWorkerPolicy'),
-                iam.ManagedPolicy.from_aws_managed_policy_name('AmazonSSMManagedInstanceCore')
-            ],
-        )
-
-        # Security group
+        # Security group for render workers
         render_worker_sg = ec2.SecurityGroup(self, 'Deadline-Render-Worker-SG',
             vpc=vpc, 
             security_group_name='Deadline-Render-Worker-SG',
             allow_all_outbound=True
         )
 
-        spot_fleets = []
-        for i, fleet in props.spot_fleet_configs.items():
-            if fleet["is_linux"]:
-                ami = ec2.MachineImage.generic_linux(fleet['worker_image'])
-            else:
-                ami = ec2.MachineImage.generic_windows(fleet['worker_image'])
-            spot_fleet_config = deadline.SpotEventPluginFleet(self,
-                fleet['name'],
-                vpc=vpc,
-                render_queue=render_queue,
-                deadline_groups=fleet['deadline_groups'],
-                deadline_pools=fleet['deadline_pools'],
-                security_groups=[render_worker_sg],
-                instance_types=self.instanceListFormatter(fleet['instance_types']),
-                fleet_instance_role=fleet_instance_role,
-                max_capacity=fleet['max_capacity'],
-                worker_machine_image=ami,
-            )
-            if fleet['tags']:
-                for key, value in fleet['tags'].items():
-                    cdk.Tags.of(spot_fleet_config).add(key, value)
-            spot_fleets.append(spot_fleet_config)
-
-        deadline.ConfigureSpotEventPlugin(self, 'SpotEventPluginConfig',
-            vpc=vpc,
-            render_queue=render_queue,
-            spot_fleets=spot_fleets,
-            configuration=deadline.SpotEventPluginSettings(
-                enable_resource_tracker=True,
-            ),
-        )
-
-
-    def instanceListFormatter(self, instance_list: list) -> list:
-        """
-        Formats a list of instance names into a list of ec2.InstanceType
-        """
-        instance_type_format_list = []
-
-        for name in instance_list:
-            instance_type_format= ec2.InstanceType(name)
-            instance_type_format_list.append(instance_type_format)
-
-        return instance_type_format_list
+        # Expose for other stacks
+        self.render_queue = render_queue
+        self.render_worker_sg = render_worker_sg
