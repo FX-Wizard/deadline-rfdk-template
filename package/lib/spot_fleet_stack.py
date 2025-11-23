@@ -48,12 +48,40 @@ class SpotFleetStack(Stack):
             ],
         )
 
+        # Create IAM user for Deadline Spot Event Plugin Admin
+        # deadline_spot_admin_user = iam.User(self, 'DeadlineSpotEventPluginAdmin',
+        #     user_name='DeadlineSpotEventPluginAdmin',
+        #     managed_policies=[
+        #         iam.ManagedPolicy.from_aws_managed_policy_name('AWSThinkboxDeadlineSpotEventPluginAdminPolicy'),
+        #         iam.ManagedPolicy.from_aws_managed_policy_name('AWSThinkboxDeadlineResourceTrackerAdminPolicy'),
+        #         iam.ManagedPolicy.from_aws_managed_policy_name('IAMFullAccess'),
+        #         iam.ManagedPolicy.from_aws_managed_policy_name('AmazonEC2ReadOnlyAccess')
+        #     ]
+        # )
+
         # Get render worker security group
         security_groups = []
         for i, sg_id in enumerate(props.security_group_ids):
             sg = ec2.SecurityGroup.from_security_group_id(
                 self, f'render_sg_{i}', security_group_id=sg_id)
             security_groups.append(sg)
+
+        userData = ec2.UserData.for_linux()
+        userData.add_commands(
+            "#!/bin/bash",
+            "sudo mkdir -p /mnt/production",
+            "fs-0ee858807f35f47e5.efs.ap-southeast-2.amazonaws.com:/ /mnt/production nfs nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport",
+            "sudo mount /mnt/production",
+            "export DEADLINE_PATH=/opt/Thinkbox/Deadline10/bin",
+            "sudo sed -i 's/^ConnectionType=.*/ConnectionType=Remote/' /var/lib/Thinkbox/Deadline10/deadline.ini",
+            "sudo sed -i 's/^ProxyRoot=.*/ProxyRoot=renderqueue.deadline.internal:4433/' /var/lib/Thinkbox/Deadline10/deadline.ini",
+            "sudo sed -i 's/^ProxyUseSSL=.*/ProxyUseSSL=True/' /var/lib/Thinkbox/Deadline10/deadline.ini",
+            "sudo sed -i 's/^ProxySSLCA=.*/ProxySSLCA=/mnt/production/ca.crt/' /var/lib/Thinkbox/Deadline10/deadline.ini",
+            "sudo sed -i 's/^ClientSSLAuthentication=.*/ClientSSLAuthentication=NotRequired/' /var/lib/Thinkbox/Deadline10/deadline.ini",
+            "sudo sed -i 's/^ProxyRoot0=.*/renderqueue.deadline.internal:4433%/mnt/production/ca.crt/' /var/lib/Thinkbox/Deadline10/deadline.ini",
+            "$DEADLINE_PATH/deadlineworker -shutdown",
+            "$DEADLINE_PATH/deadlineworker -nogui"
+        )
 
         spot_fleets = []
 
@@ -69,10 +97,13 @@ class SpotFleetStack(Stack):
                 deadline_groups=fleet['deadline_groups'],
                 deadline_pools=fleet['deadline_pools'],
                 security_groups=security_groups,
-                instance_types=self.instanceListFormatter(fleet['instance_types']),
+                # instance_types=self.instanceListFormatter(fleet['instance_types']),
+                instance_types=[ec2.InstanceType('c5a.4xlarge')],
                 fleet_instance_role=fleet_instance_role,
                 max_capacity=fleet['max_capacity'],
                 worker_machine_image=ami,
+                track_instances_with_resource_tracker=True,
+                user_data=userData
             )
             if fleet['tags']:
                 for key, value in fleet['tags'].items():

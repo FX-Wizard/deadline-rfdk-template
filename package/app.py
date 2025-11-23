@@ -5,7 +5,8 @@ import aws_cdk as cdk
 
 from .lib.rfdk_deadline_template_stack import RfdkDeadlineTemplateStack, DeadlineStackProps
 from .lib.vpc_stack import VpcStack
-from .lib.spot_fleet_stack import SpotFleetStack
+from .lib.storage_stack import StorageStack, StorageStackProps
+from .lib.spot_fleet_stack import SpotFleetStack, SpotFleetStackProps
 from .config import AppConfig
 
 app = cdk.App()
@@ -65,9 +66,23 @@ deadline_stack = RfdkDeadlineTemplateStack(
 if vpc_stack:
     deadline_stack.add_dependency(vpc_stack)
 
-# Create Spot Fleet Stack
-from .lib.spot_fleet_stack import SpotFleetStackProps
+# Create Storage Stack
+storage_stack = StorageStack(
+    app,
+    "RenderFarmStorageStack",
+    props=StorageStackProps(
+        vpc=vpc_stack.vpc if vpc_stack else None,
+        vpc_id=config.vpc_id if not vpc_stack else None,
+        enable_efs=config.enable_efs
+    ),
+    env=env
+)
 
+# Add dependencies for storage stack
+if vpc_stack:
+    storage_stack.add_dependency(vpc_stack)
+
+# Create Spot Fleet Stack
 spot_fleet_props = SpotFleetStackProps(
     vpc=vpc_stack.vpc if vpc_stack else None,
     vpc_id=config.vpc_id if not vpc_stack else None,

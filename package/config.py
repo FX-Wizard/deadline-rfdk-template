@@ -24,6 +24,9 @@ class AppConfig:
         # Set to False if there is an existing Deadline Repository in the account.
         self.create_resource_tracker_role: bool = True
 
+        # Storage settings
+        self.enable_efs: bool = True
+
         # Spot Fleet settings
         deadline_client_linux_ami: Mapping[str, str] = {self.aws_region: 'ami-05befe44e4981eab4'}
 

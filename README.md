@@ -16,6 +16,18 @@ you can create the virtualenv manually.
 
 To manually create a virtualenv on MacOS and Linux:
 
+## Install CDK
+
+Ensure Node.js and npm are installed.
+
+Install the AWS CDK Toolkit globally:
+
+```
+npm install -g aws-cdk
+```
+
+## Install RFDK
+
 ```
 python3 -m venv .venv
 ```
